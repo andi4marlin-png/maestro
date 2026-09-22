@@ -193,7 +193,7 @@
             </div>
 
             <button type="submit" id="btn-simpan-kasir" class="w-full bg-brand-600 hover:bg-brand-700 text-white font-black text-lg py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2">
-              <i class="fa-solid fa-floppy-disk text-xl"></i> SIMPAN TRANSAKSI & CETAK NOTA
+              <i class="fa-solid fa-floppy-disk text-xl"></i> <span>SIMPAN TRANSAKSI & CETAK NOTA</span>
             </button>
           </form>
         </div>
@@ -398,8 +398,12 @@
     let globalOrderList = [];
     let activeStrukData = null;
 
-    async function airtableFetch(tableName, method = 'GET', body = null) {
-      const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(tableName)}`;
+    // FUNGSI UTAMA AIRTABLE FETCH (DIBERSIHKAN DAN DITERAPKAN URL PATH PARSING SIFATNYA VALID)
+    async function airtableFetch(path, method = 'GET', body = null) {
+      const parts = path.split('/');
+      const encodedPath = parts.map(p => encodeURIComponent(p)).join('/');
+      const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodedPath}`;
+      
       const options = {
         method,
         headers: {
@@ -408,11 +412,18 @@
         }
       };
       if (body) options.body = JSON.stringify(body);
+
       try {
         const res = await fetch(url, options);
-        return await res.json();
+        const data = await res.json();
+        if (!res.ok) {
+          console.error("Airtable API Error:", data);
+          alert("Airtable Error: " + (data.error?.message || JSON.stringify(data.error) || "Gagal memproses data ke Airtable"));
+        }
+        return data;
       } catch (err) {
-        console.error("Airtable API Error:", err);
+        console.error("Network Error:", err);
+        alert("Gagal terhubung ke Airtable: " + err.message);
         return { records: [] };
       }
     }
@@ -536,7 +547,7 @@
         container.innerHTML += `
           <div class="p-3 flex justify-between items-center text-xs">
             <div><div class="font-black text-slate-800 text-sm">${r[0]} - ${r[2]}</div><div class="text-slate-500">${r[3]} • ${r[1]}</div></div>
-            <div class="text-right"><div class="font-black text-emerald-700 text-sm">Rp ${Number(r[8]).toLocaleString('id-ID')}</div></div>
+            <div class="text-right"><div class="font-black text-emerald-700 text-sm">Rp ${Number(r[8] || 0).toLocaleString('id-ID')}</div></div>
           </div>
         `;
       });
@@ -559,15 +570,29 @@
       });
 
       const nextTrxId = "TRX-" + String(lastNum + 1).padStart(3, '0');
-      globalMasterPelanggan = (plgRes.records || []).map(r => [r.fields['ID Pelanggan'], r.fields['Nama Pelanggan'], r.fields['No WA']]);
-      globalMasterLayanan = (lynRes.records || []).map(r => [r.fields['ID Layanan'], r.fields['Nama Layanan'], r.fields['Harga'], r.fields['Satuan']]);
+      
+      // MENDAPATKAN DATA MASTER SERTA MERAPIKAN HARGA SUPAYA TIDAK JADI NaN
+      globalMasterPelanggan = (plgRes.records || []).map(r => [
+        r.fields['ID Pelanggan'] || '', 
+        r.fields['Nama Pelanggan'] || '', 
+        r.fields['No WA'] || ''
+      ]);
+      
+      globalMasterLayanan = (lynRes.records || []).map(r => [
+        r.fields['ID Layanan'] || '', 
+        r.fields['Nama Layanan'] || '', 
+        Number(r.fields['Harga']) || 0, 
+        r.fields['Satuan'] || 'Kg'
+      ]);
 
       document.getElementById('kasir-id').value = nextTrxId;
       document.getElementById('kasir-id-badge').innerText = nextTrxId;
 
       const selectPlg = document.getElementById('kasir-pelanggan');
       selectPlg.innerHTML = `<option value="">-- Pilih Pelanggan --</option>`;
-      globalMasterPelanggan.forEach(p => { selectPlg.innerHTML += `<option value="${p[1]}">${p[1]} (${p[2] || 'WA -'})</option>`; });
+      globalMasterPelanggan.forEach(p => { 
+        selectPlg.innerHTML += `<option value="${p[1]}">${p[1]} (${p[2] || 'WA -'})</option>`; 
+      });
 
       document.getElementById('kasir-items-container').innerHTML = '';
       tambahBarisLayananKasir();
@@ -584,7 +609,10 @@
       div.id = rowId;
 
       let opts = `<option value="" data-harga="0">-- Pilih Layanan --</option>`;
-      globalMasterLayanan.forEach(l => { opts += `<option value="${l[1]}" data-harga="${l[2]}">${l[1]} (Rp ${Number(l[2]).toLocaleString('id-ID')}/${l[3]})</option>`; });
+      globalMasterLayanan.forEach(l => { 
+        const hrg = Number(l[2]) || 0;
+        opts += `<option value="${l[1]}" data-harga="${hrg}">${l[1]} (Rp ${hrg.toLocaleString('id-ID')}/${l[3] || 'Kg'})</option>`; 
+      });
 
       div.innerHTML = `
         <div class="flex justify-between items-center gap-2">
@@ -594,7 +622,7 @@
         <div class="flex justify-between items-center gap-2 pt-1 border-t">
           <div class="flex items-center gap-1">
             <button type="button" onclick="ubahQtyRow('${rowId}', -1)" class="btn-qty-touch bg-slate-100">-</button>
-            <input type="number" class="android-input w-20 text-center font-black text-lg item-qty" value="1" min="1" step="0.1" oninput="hitungKalkulasiKasir()" required>
+            <input type="number" class="android-input w-20 text-center font-black text-lg item-qty" value="1" min="0.1" step="0.1" oninput="hitungKalkulasiKasir()" required>
             <button type="button" onclick="ubahQtyRow('${rowId}', 1)" class="btn-qty-touch bg-brand-100 text-brand-800">+</button>
           </div>
           <div class="text-right"><span class="item-subtotal-val font-black text-slate-800 text-base">Rp 0</span></div>
@@ -605,15 +633,20 @@
     }
 
     function hapusBarisLayananKasir(rowId) {
-      if (document.querySelectorAll('.item-row-kasir').length <= 1) { alert("Minimal 1 item layanan!"); return; }
-      const el = document.getElementById(rowId); if (el) el.remove();
+      if (document.querySelectorAll('.item-row-kasir').length <= 1) { 
+        alert("Minimal 1 item layanan!"); 
+        return; 
+      }
+      const el = document.getElementById(rowId); 
+      if (el) el.remove();
       hitungKalkulasiKasir();
     }
 
     function ubahQtyRow(rowId, delta) {
       const row = document.getElementById(rowId); if (!row) return;
       const inp = row.querySelector('.item-qty');
-      inp.value = Math.max(1, (parseFloat(inp.value) || 0) + delta);
+      const current = parseFloat(inp.value) || 0;
+      inp.value = Math.max(0.1, +(current + delta).toFixed(2));
       hitungKalkulasiKasir();
     }
 
@@ -622,7 +655,9 @@
       document.querySelectorAll('.item-row-kasir').forEach(row => {
         const select = row.querySelector('.item-select-layanan');
         const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-        const harga = parseFloat(select.options[select.selectedIndex]?.getAttribute('data-harga') || 0);
+        const opt = select.options[select.selectedIndex];
+        const harga = opt ? (parseFloat(opt.getAttribute('data-harga')) || 0) : 0;
+        
         const sub = harga * qty;
         row.querySelector('.item-subtotal-val').innerText = "Rp " + sub.toLocaleString('id-ID');
         totalSubtotal += sub;
@@ -640,76 +675,133 @@
       const badge = document.getElementById('display-big-badge-status');
 
       if (bayar >= totalBayar) {
-        label.innerText = "KEMBALIAN"; val.innerText = "Rp " + (bayar - totalBayar).toLocaleString('id-ID');
-        badge.innerText = "LUNAS"; badge.className = "px-3 py-1 rounded-xl text-xs font-black bg-emerald-500 text-white shadow";
+        label.innerText = "KEMBALIAN"; 
+        val.innerText = "Rp " + (bayar - totalBayar).toLocaleString('id-ID');
+        badge.innerText = "LUNAS"; 
+        badge.className = "px-3 py-1 rounded-xl text-xs font-black bg-emerald-500 text-white shadow";
         document.getElementById('kasir-status-bayar').value = "Lunas";
       } else {
-        label.innerText = "KURANG / TERHUTANG"; val.innerText = "Rp " + (totalBayar - bayar).toLocaleString('id-ID');
-        badge.innerText = "BELUM LUNAS"; badge.className = "px-3 py-1 rounded-xl text-xs font-black bg-rose-500 text-white shadow animate-pulse";
+        label.innerText = "KURANG / TERHUTANG"; 
+        val.innerText = "Rp " + (totalBayar - bayar).toLocaleString('id-ID');
+        badge.innerText = "BELUM LUNAS"; 
+        badge.className = "px-3 py-1 rounded-xl text-xs font-black bg-rose-500 text-white shadow animate-pulse";
         document.getElementById('kasir-status-bayar').value = "Belum Lunas";
       }
     }
 
     function setQuickPay(val) {
-      const tot = parseFloat(document.getElementById('display-big-total').innerText.replace(/[^0-9]/g,'')) || 0;
+      const totText = document.getElementById('display-big-total').innerText;
+      const tot = parseFloat(totText.replace(/[^0-9]/g, '')) || 0;
       document.getElementById('kasir-bayar').value = val === 'pas' ? tot : val;
       hitungKalkulasiKasir();
     }
 
     async function handleSimpanKasir(e) {
       e.preventDefault();
-      const idTrx = document.getElementById('kasir-id').value;
-      const tgl = document.getElementById('kasir-tanggal').value;
-      const pelanggan = document.getElementById('kasir-pelanggan').value;
-      const diskon = parseFloat(document.getElementById('kasir-diskon').value) || 0;
-      const subtotal = parseFloat(document.getElementById('kasir-subtotal').value) || 0;
-      const totalBayar = Math.max(0, subtotal - diskon);
-      const bayar = parseFloat(document.getElementById('kasir-bayar').value) || 0;
-      const kembalian = bayar >= totalBayar ? bayar - totalBayar : 0;
-      const statusBayar = document.getElementById('kasir-status-bayar').value;
-      const statusOrder = document.getElementById('kasir-status-laundry').value;
+      
+      const btnSimpan = document.getElementById('btn-simpan-kasir');
+      btnSimpan.disabled = true;
+      btnSimpan.innerHTML = `<i class="fa-solid fa-spinner animate-spin text-xl"></i> MENYIMPAN TRANSAKSI...`;
 
-      const items = [];
-      document.querySelectorAll('.item-row-kasir').forEach(row => {
-        const select = row.querySelector('.item-select-layanan');
-        const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
-        const harga = parseFloat(select.options[select.selectedIndex]?.getAttribute('data-harga') || 0);
-        if (select.value && qty > 0) {
-          items.push({ namaLayanan: select.value, hargaSatuan: harga, jumlah: qty, subtotal: harga * qty });
-        }
-      });
+      try {
+        const idTrx = document.getElementById('kasir-id').value;
+        const tgl = document.getElementById('kasir-tanggal').value;
+        const pelanggan = document.getElementById('kasir-pelanggan').value;
+        const diskon = parseFloat(document.getElementById('kasir-diskon').value) || 0;
+        const subtotal = parseFloat(document.getElementById('kasir-subtotal').value) || 0;
+        const totalBayar = Math.max(0, subtotal - diskon);
+        const bayar = parseFloat(document.getElementById('kasir-bayar').value) || 0;
+        const kembalian = bayar >= totalBayar ? bayar - totalBayar : 0;
+        const statusBayar = document.getElementById('kasir-status-bayar').value;
+        const statusOrder = document.getElementById('kasir-status-laundry').value;
 
-      if (items.length === 0) { alert("Pilih layanan terlebih dahulu!"); return; }
-
-      // Simpan item transaksi ke Airtable
-      const recordsToCreate = items.map(item => ({
-        fields: {
-          "ID Transaksi": idTrx, "Tanggal": tgl, "Nama Pelanggan": pelanggan,
-          "Layanan": item.namaLayanan, "Harga Satuan": item.hargaSatuan, "Jumlah": item.jumlah,
-          "Subtotal": item.subtotal, "Diskon": diskon, "Total Bayar": totalBayar,
-          "Bayar": bayar, "Kembalian": kembalian, "Status Bayar": statusBayar, "Status Laundry": statusOrder
-        }
-      }));
-
-      await airtableFetch('Transaksi', 'POST', { records: recordsToCreate });
-
-      // Simpan Pemasukan jika ada pembayaran
-      if (bayar > 0) {
-        const incRes = await airtableFetch('Pemasukan');
-        const incId = "INC-" + String((incRes.records || []).length + 1).padStart(3, '0');
-        await airtableFetch('Pemasukan', 'POST', {
-          records: [{
-            fields: {
-              "ID Pemasukan": incId, "Tanggal": tgl, "No Nota": idTrx,
-              "Keterangan": `Pembayaran Transaksi ${idTrx} - ${pelanggan}`, "Jumlah": bayar, "Kategori": "Pendapatan Laundry"
-            }
-          }]
+        const items = [];
+        document.querySelectorAll('.item-row-kasir').forEach(row => {
+          const select = row.querySelector('.item-select-layanan');
+          const qty = parseFloat(row.querySelector('.item-qty').value) || 0;
+          const opt = select.options[select.selectedIndex];
+          const harga = opt ? (parseFloat(opt.getAttribute('data-harga')) || 0) : 0;
+          if (select.value && qty > 0) {
+            items.push({ 
+              namaLayanan: select.value, 
+              hargaSatuan: harga, 
+              jumlah: qty, 
+              subtotal: harga * qty 
+            });
+          }
         });
-      }
 
-      const payload = { idTransaksi: idTrx, tglTransaksi: tgl, namaPelangganKasir: pelanggan, diskonKasir: diskon, totalBayarKasir: totalBayar, bayarKasir: bayar, kembalianKasir: kembalian, statusBayarKasir: statusBayar, statusOrderKasir: statusOrder, items };
-      openReceiptModal(payload);
-      initKasirForm();
+        if (items.length === 0) { 
+          alert("Pilih minimal 1 item layanan!"); 
+          btnSimpan.disabled = false;
+          btnSimpan.innerHTML = `<i class="fa-solid fa-floppy-disk text-xl"></i> SIMPAN TRANSAKSI & CETAK NOTA`;
+          return; 
+        }
+
+        // SIMPAN DENGAN TIPE ANGKA AMAN
+        const recordsToCreate = items.map(item => ({
+          fields: {
+            "ID Transaksi": idTrx, 
+            "Tanggal": tgl, 
+            "Nama Pelanggan": pelanggan,
+            "Layanan": item.namaLayanan, 
+            "Harga Satuan": Number(item.hargaSatuan) || 0, 
+            "Jumlah": Number(item.jumlah) || 0,
+            "Subtotal": Number(item.subtotal) || 0, 
+            "Diskon": Number(diskon) || 0, 
+            "Total Bayar": Number(totalBayar) || 0,
+            "Bayar": Number(bayar) || 0, 
+            "Kembalian": Number(kembalian) || 0, 
+            "Status Bayar": statusBayar, 
+            "Status Laundry": statusOrder
+          }
+        }));
+
+        const createRes = await airtableFetch('Transaksi', 'POST', { records: recordsToCreate });
+
+        if (!createRes || !createRes.records) {
+          throw new Error("Gagal menyimpan transaksi ke database Airtable.");
+        }
+
+        // Simpan Pemasukan jika ada pembayaran
+        if (bayar > 0) {
+          const incRes = await airtableFetch('Pemasukan');
+          const incId = "INC-" + String((incRes.records || []).length + 1).padStart(3, '0');
+          await airtableFetch('Pemasukan', 'POST', {
+            records: [{
+              fields: {
+                "ID Pemasukan": incId, 
+                "Tanggal": tgl, 
+                "No Nota": idTrx,
+                "Keterangan": `Pembayaran Transaksi ${idTrx} - ${pelanggan}`, 
+                "Jumlah": Number(bayar) || 0, 
+                "Kategori": "Pendapatan Laundry"
+              }
+            }]
+          });
+        }
+
+        const payload = { 
+          idTransaksi: idTrx, 
+          tglTransaksi: tgl, 
+          namaPelangganKasir: pelanggan, 
+          diskonKasir: diskon, 
+          totalBayarKasir: totalBayar, 
+          bayarKasir: bayar, 
+          kembalianKasir: kembalian, 
+          statusBayarKasir: statusBayar, 
+          statusOrderKasir: statusOrder, 
+          items 
+        };
+
+        openReceiptModal(payload);
+        await initKasirForm();
+      } catch (err) {
+        alert("Gagal menyimpan: " + err.message);
+      } finally {
+        btnSimpan.disabled = false;
+        btnSimpan.innerHTML = `<i class="fa-solid fa-floppy-disk text-xl"></i> SIMPAN TRANSAKSI & CETAK NOTA`;
+      }
     }
 
     // RECEIPT & PRINT & WA LOGIC
@@ -725,20 +817,24 @@
       const itemsTbl = document.getElementById('rec-items-list');
       itemsTbl.innerHTML = '';
       p.items.forEach(i => {
-        itemsTbl.innerHTML += `<tr><td colspan="2" class="font-bold">${i.namaLayanan}</td></tr><tr><td class="pl-2">${i.jumlah} x Rp ${Number(i.hargaSatuan).toLocaleString('id-ID')}</td><td class="text-right">Rp ${Number(i.subtotal).toLocaleString('id-ID')}</td></tr>`;
+        itemsTbl.innerHTML += `<tr><td colspan="2" class="font-bold">${i.namaLayanan}</td></tr><tr><td class="pl-2">${i.jumlah} x Rp ${Number(i.hargaSatuan || 0).toLocaleString('id-ID')}</td><td class="text-right">Rp ${Number(i.subtotal || 0).toLocaleString('id-ID')}</td></tr>`;
       });
 
-      const sub = p.items.reduce((sum, i) => sum + Number(i.subtotal), 0);
+      const sub = p.items.reduce((sum, i) => sum + Number(i.subtotal || 0), 0);
       document.getElementById('rec-subtotal').innerText = "Rp " + sub.toLocaleString('id-ID');
-      document.getElementById('rec-diskon').innerText = "Rp " + Number(p.diskonKasir).toLocaleString('id-ID');
-      document.getElementById('rec-total').innerText = "Rp " + Number(p.totalBayarKasir).toLocaleString('id-ID');
-      document.getElementById('rec-bayar').innerText = "Rp " + Number(p.bayarKasir).toLocaleString('id-ID');
-      document.getElementById('rec-kembalian').innerText = "Rp " + Number(p.kembalianKasir).toLocaleString('id-ID');
+      document.getElementById('rec-diskon').innerText = "Rp " + Number(p.diskonKasir || 0).toLocaleString('id-ID');
+      document.getElementById('rec-total').innerText = "Rp " + Number(p.totalBayarKasir || 0).toLocaleString('id-ID');
+      document.getElementById('rec-bayar').innerText = "Rp " + Number(p.bayarKasir || 0).toLocaleString('id-ID');
+      document.getElementById('rec-kembalian').innerText = "Rp " + Number(p.kembalianKasir || 0).toLocaleString('id-ID');
 
       const hutRow = document.getElementById('rec-terhutang-row');
       const hut = p.totalBayarKasir > p.bayarKasir ? p.totalBayarKasir - p.bayarKasir : 0;
-      if (hut > 0) { hutRow.classList.remove('hidden'); document.getElementById('rec-terhutang').innerText = "Rp " + hut.toLocaleString('id-ID'); }
-      else { hutRow.classList.add('hidden'); }
+      if (hut > 0) { 
+        hutRow.classList.remove('hidden'); 
+        document.getElementById('rec-terhutang').innerText = "Rp " + hut.toLocaleString('id-ID'); 
+      } else { 
+        hutRow.classList.add('hidden'); 
+      }
 
       document.getElementById('rec-st-bayar').innerText = p.statusBayarKasir;
       document.getElementById('rec-st-laundry').innerText = p.statusOrderKasir;
@@ -758,8 +854,8 @@
       if (phone.startsWith('0')) phone = '62' + phone.substring(1);
 
       let msg = `*STRUK NOTA MAESTRO LAUNDRY*\n-----------------------------------\nNo Nota : ${activeStrukData.idTransaksi}\nTanggal : ${activeStrukData.tglTransaksi}\nNama    : ${activeStrukData.namaPelangganKasir}\n-----------------------------------\n*DETAIL LAYANAN:*\n`;
-      activeStrukData.items.forEach(i => { msg += `• ${i.namaLayanan}\n  ${i.jumlah} x Rp ${Number(i.hargaSatuan).toLocaleString('id-ID')} = Rp ${Number(i.subtotal).toLocaleString('id-ID')}\n`; });
-      msg += `-----------------------------------\nTotal Bayar : Rp ${Number(activeStrukData.totalBayarKasir).toLocaleString('id-ID')}\nDibayar     : Rp ${Number(activeStrukData.bayarKasir).toLocaleString('id-ID')}\n`;
+      activeStrukData.items.forEach(i => { msg += `• ${i.namaLayanan}\n  ${i.jumlah} x Rp ${Number(i.hargaSatuan || 0).toLocaleString('id-ID')} = Rp ${Number(i.subtotal || 0).toLocaleString('id-ID')}\n`; });
+      msg += `-----------------------------------\nTotal Bayar : Rp ${Number(activeStrukData.totalBayarKasir || 0).toLocaleString('id-ID')}\nDibayar     : Rp ${Number(activeStrukData.bayarKasir || 0).toLocaleString('id-ID')}\n`;
       msg += `Status Bayar   : *${activeStrukData.statusBayarKasir}*\nStatus Laundry : *${activeStrukData.statusOrderKasir}*\n-----------------------------------\n_Terima kasih telah mempercayakan laundry Anda di Maestro Laundry!_`;
 
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
@@ -774,16 +870,30 @@
       records.forEach(r => {
         const f = r.fields;
         const tId = String(f['ID Transaksi'] || '').trim();
+        if (!tId) return;
+        
         if (!grouped[tId]) {
           grouped[tId] = {
-            id: tId, tgl: f['Tanggal'], pelanggan: f['Nama Pelanggan'], items: [],
-            diskon: Number(f['Diskon'])||0, totalBayar: Number(f['Total Bayar'])||0,
-            bayar: Number(f['Bayar'])||0, kembalian: Number(f['Kembalian'])||0,
-            statusBayar: f['Status Bayar'], statusLaundry: f['Status Laundry'], recordIds: []
+            id: tId, 
+            tgl: f['Tanggal'] || '', 
+            pelanggan: f['Nama Pelanggan'] || '-', 
+            items: [],
+            diskon: Number(f['Diskon'])||0, 
+            totalBayar: Number(f['Total Bayar'])||0,
+            bayar: Number(f['Bayar'])||0, 
+            kembalian: Number(f['Kembalian'])||0,
+            statusBayar: f['Status Bayar'] || 'Belum Lunas', 
+            statusLaundry: f['Status Laundry'] || 'Baru', 
+            recordIds: []
           };
         }
         grouped[tId].recordIds.push(r.id);
-        grouped[tId].items.push({ layanan: f['Layanan'], harga: Number(f['Harga Satuan'])||0, qty: Number(f['Jumlah'])||0, subtotal: Number(f['Subtotal'])||0 });
+        grouped[tId].items.push({ 
+          layanan: f['Layanan'] || '-', 
+          harga: Number(f['Harga Satuan'])||0, 
+          qty: Number(f['Jumlah'])||0, 
+          subtotal: Number(f['Subtotal'])||0 
+        });
       });
 
       globalOrderList = Object.values(grouped);
@@ -814,7 +924,7 @@
             ${hut > 0 ? `<div class="text-right"><span class="text-rose-600 font-bold block">Terhutang:</span><span class="font-black text-rose-700 text-sm">Rp ${hut.toLocaleString('id-ID')}</span></div>` : ''}
           </div>
           <div class="grid grid-cols-2 gap-2 pt-1">
-            <button onclick='openReceiptModalFromOrder(${JSON.stringify(o).replace(/'/g, "&apos;")})' class="bg-slate-100 text-slate-800 text-xs font-bold py-2 rounded-xl"><i class="fa-solid fa-receipt"></i> Struk / WA</button>
+            <button onclick="openReceiptModalFromOrder('${o.id}')" class="bg-slate-100 text-slate-800 text-xs font-bold py-2 rounded-xl"><i class="fa-solid fa-receipt"></i> Struk / WA</button>
             <button onclick="openModalUpdateOrder('${o.id}', '${o.statusBayar}', '${o.statusLaundry}', ${hut})" class="bg-brand-600 text-white text-xs font-bold py-2 rounded-xl"><i class="fa-solid fa-pen-to-square"></i> Update Status</button>
           </div>
         `;
@@ -822,14 +932,27 @@
       });
     }
 
-    function openReceiptModalFromOrder(o) {
-      openReceiptModal({ idTransaksi: o.id, tglTransaksi: o.tgl, namaPelangganKasir: o.pelanggan, diskonKasir: o.diskon, totalBayarKasir: o.totalBayar, bayarKasir: o.bayar, kembalianKasir: o.kembalian, statusBayarKasir: o.statusBayar, statusOrderKasir: o.statusLaundry, items: o.items.map(i => ({ namaLayanan: i.layanan, hargaSatuan: i.harga, jumlah: i.qty, subtotal: i.subtotal })) });
+    function openReceiptModalFromOrder(trxId) {
+      const o = globalOrderList.find(x => x.id === trxId);
+      if (!o) return;
+      openReceiptModal({ 
+        idTransaksi: o.id, 
+        tglTransaksi: o.tgl, 
+        namaPelangganKasir: o.pelanggan, 
+        diskonKasir: o.diskon, 
+        totalBayarKasir: o.totalBayar, 
+        bayarKasir: o.bayar, 
+        kembalianKasir: o.kembalian, 
+        statusBayarKasir: o.statusBayar, 
+        statusOrderKasir: o.statusLaundry, 
+        items: o.items.map(i => ({ namaLayanan: i.layanan, hargaSatuan: i.harga, jumlah: i.qty, subtotal: i.subtotal })) 
+      });
     }
 
     function openModalUpdateOrder(trxId, stBayar, stLaundry, terhutang) {
       document.getElementById('edit-order-id').value = trxId;
       document.getElementById('edit-order-id-label').innerText = trxId;
-      document.getElementById('edit-order-terhutang-val').innerText = "Rp " + Number(terhutang).toLocaleString('id-ID');
+      document.getElementById('edit-order-terhutang-val').innerText = "Rp " + Number(terhutang || 0).toLocaleString('id-ID');
       document.getElementById('edit-order-bayar-tambahan').value = 0;
       document.getElementById('edit-order-status-bayar').value = stBayar;
       document.getElementById('edit-order-status-laundry').value = stLaundry;
@@ -854,7 +977,12 @@
 
       for (const recId of orderObj.recordIds) {
         await airtableFetch(`Transaksi/${recId}`, 'PATCH', {
-          fields: { "Bayar": newBayar, "Kembalian": newKembalian, "Status Bayar": stBayar, "Status Laundry": stLaundry }
+          fields: { 
+            "Bayar": Number(newBayar) || 0, 
+            "Kembalian": Number(newKembalian) || 0, 
+            "Status Bayar": stBayar, 
+            "Status Laundry": stLaundry 
+          }
         });
       }
 
@@ -864,8 +992,12 @@
         await airtableFetch('Pemasukan', 'POST', {
           records: [{
             fields: {
-              "ID Pemasukan": incId, "Tanggal": tglHariIni, "No Nota": idTrx,
-              "Keterangan": `Pelunasan ${idTrx} - ${orderObj.pelanggan}`, "Jumlah": bayarTambahan, "Kategori": "Pelunasan Laundry"
+              "ID Pemasukan": incId, 
+              "Tanggal": tglHariIni, 
+              "No Nota": idTrx,
+              "Keterangan": `Pelunasan ${idTrx} - ${orderObj.pelanggan}`, 
+              "Jumlah": Number(bayarTambahan) || 0, 
+              "Kategori": "Pelunasan Laundry"
             }
           }]
         });
@@ -895,10 +1027,10 @@
       lIn.innerHTML = ''; lOut.innerHTML = '';
 
       rawInc.reverse().forEach(r => {
-        lIn.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800">${r['Keterangan']}</div><div class="text-slate-400">${r['Tanggal']} • Nota: ${r['No Nota']}</div></div><div class="font-black text-emerald-600 text-sm">+Rp ${Number(r['Jumlah']).toLocaleString('id-ID')}</div></div>`;
+        lIn.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800">${r['Keterangan'] || '-'}</div><div class="text-slate-400">${r['Tanggal'] || '-'} • Nota: ${r['No Nota'] || '-'}</div></div><div class="font-black text-emerald-600 text-sm">+Rp ${Number(r['Jumlah'] || 0).toLocaleString('id-ID')}</div></div>`;
       });
       rawExp.reverse().forEach(r => {
-        lOut.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800">${r['Keterangan']}</div><div class="text-slate-400">${r['Tanggal']} • Kat: ${r['Kategori']}</div></div><div class="font-black text-rose-600 text-sm">-Rp ${Number(r['Jumlah']).toLocaleString('id-ID')}</div></div>`;
+        lOut.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800">${r['Keterangan'] || '-'}</div><div class="text-slate-400">${r['Tanggal'] || '-'} • Kat: ${r['Kategori'] || '-'}</div></div><div class="font-black text-rose-600 text-sm">-Rp ${Number(r['Jumlah'] || 0).toLocaleString('id-ID')}</div></div>`;
       });
     }
 
@@ -927,13 +1059,13 @@
         const incRes = await airtableFetch('Pemasukan');
         const incId = "INC-" + String((incRes.records || []).length + 1).padStart(3, '0');
         await airtableFetch('Pemasukan', 'POST', {
-          records: [{ fields: { "ID Pemasukan": incId, "Tanggal": tgl, "No Nota": "-", "Keterangan": ket, "Jumlah": jml, "Kategori": "Pendapatan Lainnya" } }]
+          records: [{ fields: { "ID Pemasukan": incId, "Tanggal": tgl, "No Nota": "-", "Keterangan": ket, "Jumlah": Number(jml) || 0, "Kategori": "Pendapatan Lainnya" } }]
         });
       } else {
         const expRes = await airtableFetch('Pengeluaran');
         const expId = "EXP-" + String((expRes.records || []).length + 1).padStart(3, '0');
         await airtableFetch('Pengeluaran', 'POST', {
-          records: [{ fields: { "ID Pengeluaran": expId, "Tanggal": tgl, "Keterangan": ket, "Jumlah": jml, "Kategori": "Lain-lain" } }]
+          records: [{ fields: { "ID Pengeluaran": expId, "Tanggal": tgl, "Keterangan": ket, "Jumlah": Number(jml) || 0, "Kategori": "Lain-lain" } }]
         });
       }
       loadKeuanganData();
@@ -946,7 +1078,8 @@
       container.innerHTML = '';
       (res.records || []).forEach(r => {
         const p = r.fields;
-        container.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800 text-sm">${p['Nama Pelanggan']}</div><div class="text-slate-500 font-mono">${p['ID Pelanggan']}</div></div><a href="https://wa.me/${String(p['No WA']).replace(/[^0-9]/g,'')}" target="_blank" class="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-lg"><i class="fa-brands fa-whatsapp"></i> ${p['No WA']}</a></div>`;
+        const wa = String(p['No WA'] || '');
+        container.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800 text-sm">${p['Nama Pelanggan'] || '-'}</div><div class="text-slate-500 font-mono">${p['ID Pelanggan'] || '-'}</div></div><a href="https://wa.me/${wa.replace(/[^0-9]/g,'')}" target="_blank" class="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-1 rounded-lg"><i class="fa-brands fa-whatsapp"></i> ${wa || '-'}</a></div>`;
       });
     }
 
@@ -961,11 +1094,14 @@
       await airtableFetch('Pelanggan', 'POST', {
         records: [{ fields: { "ID Pelanggan": id, "Nama Pelanggan": nama, "No WA": wa } }]
       });
+      document.getElementById('plg-nama').value = '';
+      document.getElementById('plg-wa').value = '';
       loadPelangganData();
     }
 
     function openModalQuickPelanggan() { document.getElementById('modal-quick-pelanggan').classList.remove('hidden'); }
     function closeModalQuickPelanggan() { document.getElementById('modal-quick-pelanggan').classList.add('hidden'); }
+    
     async function handleSimpanPelangganQuick(e) {
       e.preventDefault();
       const nama = document.getElementById('quick-plg-nama').value;
@@ -978,7 +1114,8 @@
         records: [{ fields: { "ID Pelanggan": id, "Nama Pelanggan": nama, "No WA": wa } }]
       });
       closeModalQuickPelanggan();
-      initKasirForm();
+      await initKasirForm();
+      document.getElementById('kasir-pelanggan').value = nama;
     }
 
     // LAYANAN LOGIC
@@ -988,7 +1125,8 @@
       container.innerHTML = '';
       (res.records || []).forEach(r => {
         const l = r.fields;
-        container.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800 text-sm">${l['Nama Layanan']}</div><div class="text-slate-500 font-mono">${l['ID Layanan']}</div></div><div class="text-right"><div class="font-black text-brand-700 text-sm">Rp ${Number(l['Harga']).toLocaleString('id-ID')}</div><div class="text-[10px] text-slate-400 font-bold">/ ${l['Satuan']}</div></div></div>`;
+        const harga = Number(l['Harga']) || 0;
+        container.innerHTML += `<div class="p-3 flex justify-between items-center text-xs"><div><div class="font-bold text-slate-800 text-sm">${l['Nama Layanan'] || '-'}</div><div class="text-slate-500 font-mono">${l['ID Layanan'] || '-'}</div></div><div class="text-right"><div class="font-black text-brand-700 text-sm">Rp ${harga.toLocaleString('id-ID')}</div><div class="text-[10px] text-slate-400 font-bold">/ ${l['Satuan'] || 'Kg'}</div></div></div>`;
       });
     }
 
@@ -1002,8 +1140,10 @@
       const id = "LYN-" + String((res.records || []).length + 1).padStart(3, '0');
 
       await airtableFetch('Layanan', 'POST', {
-        records: [{ fields: { "ID Layanan": id, "Nama Layanan": nama, "Harga": harga, "Satuan": satuan } }]
+        records: [{ fields: { "ID Layanan": id, "Nama Layanan": nama, "Harga": Number(harga) || 0, "Satuan": satuan } }]
       });
+      document.getElementById('lyn-nama').value = '';
+      document.getElementById('lyn-harga').value = '';
       loadLayananData();
     }
   </script>
